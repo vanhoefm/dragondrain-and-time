@@ -1,329 +1,101 @@
-# Aircrack-ng
+These tools are part of the [Dragonblood paper](https://papers.mathyvanhoef.com/dragonblood.pdf) titled "Dragonblood: A Security Analysis of WPA3's SAE Handshake".
 
-[![Linux/Mac Build Status](https://travis-ci.org/aircrack-ng/aircrack-ng.svg?branch=master)](https://travis-ci.org/aircrack-ng/aircrack-ng)
-[![Windows Build Status](https://ci.appveyor.com/api/projects/status/github/aircrack-ng/aircrack-ng?branch=master&svg=true)](https://ci.appveyor.com/project/aircrack-ng/aircrack-ng)
-[![Intel Compiler Build Status](https://buildbot.aircrack-ng.org/badges/aircrack-ng.png?left_text=Intel%20Compiler%20Build)](https://buildbot.aircrack-ng.org/)
-[![Alpine Linux Build Status](https://buildbot.aircrack-ng.org/badges/aircrack-ng-alpine.png?left_text=Alpine%20Linux%20Build)](https://buildbot.aircrack-ng.org/)
-[![Kali Linux Build Status](https://buildbot.aircrack-ng.org/badges/aircrack-ng-kali.png?left_text=Kali%20Linux%20Build)](https://buildbot.aircrack-ng.org/)
-[![Armel Kali Linux Build Status](https://buildbot.aircrack-ng.org/badges/aircrack-ng-armel.png?left_text=Armel%20Kali%20Linux%20Build)](https://buildbot.aircrack-ng.org/)
-[![Armhf Kali Linux Build Status](https://buildbot.aircrack-ng.org/badges/aircrack-ng-armhf.png?left_text=Armhf%20Kali%20Linux%20Build)](https://buildbot.aircrack-ng.org/)
-[![FreeBSD Build Status](https://buildbot.aircrack-ng.org/badges/aircrack-ng-bsd.png?left_text=FreeBSD%20Build)](https://buildbot.aircrack-ng.org/)
-[![Coverity Scan Build Status](https://scan.coverity.com/projects/aircrack-ng/badge.svg)](https://scan.coverity.com/projects/aircrack-ng)
-[![Coveralls Coverage Status](https://coveralls.io/repos/github/aircrack-ng/aircrack-ng/badge.svg?branch=master)](https://coveralls.io/github/aircrack-ng/aircrack-ng?branch=master)
-[![PackageCloud DEB](https://img.shields.io/badge/deb-packagecloud.io-844fec.svg)](https://packagecloud.io/aircrack-ng/git/install#bash-deb)
-[![PackageCloud RPM](https://img.shields.io/badge/rpm-packagecloud.io-844fec.svg)](https://packagecloud.io/aircrack-ng/git/install#bash-rpm)
+# Prerequisites
 
-Aircrack-ng is a complete suite of tools to assess WiFi network security.
+## Compilation
 
-It focuses on different areas of WiFi security:
- * Monitoring: Packet capture and export of data to text files for further processing by third party tools.
- * Attacking: Replay attacks, deauthentication, fake access points and others via packet injection.
- * Testing: Checking WiFi cards and driver capabilities (capture and injection).
- * Cracking: WEP and WPA PSK (WPA 1 and 2).
+Our scripts were tested on Kali Linux. To install the required dependencies on Kali, execute:
 
-All tools are command line which allows for heavy scripting. A lot of GUIs have taken advantage of this feature. It works primarily Linux but also Windows, OS X, FreeBSD, OpenBSD, NetBSD, as well as Solaris and even eComStation 2. 
+	apt-get update
+	apt-get install autoconf automake libtool shtool libssl-dev pkg-config
 
-# Building
+After this, inside the repository directory compile our tools using:
 
-## Requirements
+	autoreconf -i
+	./configure
+	make
 
- * Autoconf
- * Automake
- * Libtool
- * shtool
- * OpenSSL development package or libgcrypt development package.
- * Airmon-ng (Linux) requires ethtool.
- * On windows, cygwin has to be used and it also requires w32api package.
- * On Windows, if using clang, libiconv and libiconv-devel
- * Linux: LibNetlink 1 or 3. It can be disabled by passing --disable-libnl to configure.
- * pkg-config (pkgconf on FreeBSD)
- * FreeBSD, OpenBSD, NetBSD, Solaris and OS X with macports: gmake
- * Linux/Cygwin: make and Standard C++ Library development package (Debian: libstdc++-dev)
+Remember to disable Wi-Fi in your network manager before using our scripts. After disabling Wi-Fi, execute `sudo rfkill unblock wifi` so our scripts can still use Wi-Fi.
 
-## Optional stuff
+## Required Wi-Fi Dongle and Configuration
 
- * If you want SSID filtering with regular expression in airodump-ng
-   (-essid-regex) pcre development package is required.
- * If you want to use airolib-ng and '-r' option in aircrack-ng,
-   SQLite development package >= 3.3.17 (3.6.X version or better is recommended)
- * If you want to use Airpcap, the 'developer' directory from the CD/ISO/SDK is required.
- * In order to build `besside-ng`, `besside-ng-crawler`, `easside-ng`, `tkiptun-ng` and `wesside-ng`,
-   libpcap development package is required (on Cygwin, use the Aircap SDK instead; see above)
- * For best performance on FreeBSD (50-70% more), install gcc5 (or better) via: pkg install gcc7
- * rfkill
- * For best performance on SMP machines, ensure the hwloc library and headers are installed. It is strongly recommended on high core count systems, it may give a serious speed boost
- * CMocka for unit testing
+Both the Dragondrain and Dragontime tool assume the [`ath_masker` kernel module](https://github.com/vanhoefm/ath_masker) is loaded. Because of this, both tools only support Atheros wireless cards. This is because both tools rely on the ability of the wireless card to acknowledge frames sent to spoofed MAC addresses. Currently we only implemented this acknowledgement functionality for Atheros cards.
 
-## Installing required and optional dependencies
+After loading the `ath_masker` kernel module, and afterwards plugging in the Wi-Fi dongle, you need to put the interface into monitor mode:
 
-Below are instructions for installing the basic requirements to build
-`aircrack-ng` for a number of operating systems.
+	# Remember to first disable Wi-Fi in your network manager
+	sudo rfkill unblock wifi
+	sudo ifconfig wlan0 down
+	sudo iw wlan0 set type monitor
+	sudo ifconfig wlan0 up
 
-**Note**: CMocka should not be a dependency when packaging Aircrack-ng.
+Atheros devices we tested ourselves to work properly with the `ath_masker` kernel module are:
+- **TODO: Amazon links**
+- **TODO: Ask 3rd parties which tools they used**
 
-### Linux
+Other Atheros devices that should work (but we did not explicitly test ourselves):
+- **TODO: Amazon links**
 
-#### Debian/Ubuntu
+So again, **remember to load [`ath_masker`](https://github.com/vanhoefm/ath_masker) before running Dragondrain and Dragontime**!
 
-    sudo apt-get install build-essential autoconf automake libtool pkg-config libnl-3-dev libnl-genl-3-dev libssl-dev ethtool shtool rfkill zlib1g-dev libpcap-dev libsqlite3-dev libpcre3-dev libhwloc-dev libcmocka-dev
+# Dragondrain: Clogging Attacks
 
-#### Fedora/CentOS/RHEL
+The Dragondrain tool forges Commit messages to cause a high CPU usage on the target. This can for example be used to drain the battery of a device, or more generally to drain and exhaust resources.
 
-    sudo yum install libtool pkgconfig sqlite-devel autoconf automake openssl-devel libpcap-devel pcre-devel rfkill libnl3-devel gcc gcc-c++ ethtool hwloc-devel libcmocka-devel
+## Quick start
 
-### BSD
+1. First run `./dragondrain -d wlan0 -a 01:02:03:04:05:06 -c 6 -b 54 -n 1 -r 200` to test if it's possible to bypass anti-clogging, see "Common Usage" below for more details.
+2. If that fails, run `./dragondrain -d wlan0 -a 01:02:03:04:05:06 -c 6 -b 54 -n 20 -r 200` while varying some parameters, and optionally trying curve P-521 by including parameter `-g 21`. See "Common Usage" below for more details.
 
-#### FreeBSD
+## Basic Usage
 
-    pkg install pkgconf shtool libtool gcc7 automake autoconf pcre sqlite3 openssl gmake hwloc cmocka
+For a list of all supported parameters, run `./dragondrain -h`. The only two required parameters are `-d` which specifies the wireless interface to use, and `-a` which specifies the MAC address of the Access Point to attack. For example:
 
-#### DragonflyBSD
+	./dragondrain -d wlan0 -a 01:02:03:04:05:06
 
-    pkg install pkgconf shtool libtool gcc7 automake autoconf pcre sqlite3 libgcrypt gmake cmocka
+**Before running the tool, remember to first configure your Wi-Fi dongle (see "Required Wi-Fi Dongle and Configuration").** In practice you will also want to using the `-c` parameter to specify the channel of the AP, the `-b` parameter to select the bitrate used to inject frames, and the `-n` parameter to specify how many MAC addresses to spoof. We found that in practice, **some APs can only handle a small number of concurrently connected clients**, meaning most forged handshakes will fail. To prevent this, the adversary should only spoof a small number of MAC addresses for the attack to successfully overload the CPU of the victim. For example, to spoof 20 MAC addresses against an AP on channel 6 using a bitrate of 54, execute:
 
-### OSX
+	./dragondrain -d wlan0 -a 01:02:03:04:05:06 -c 6 -b 54 -n 20
 
-XCode, Xcode command line tools and HomeBrew are required.
+The tool will, for example, show the following output after executing this command:
 
-    brew install autoconf automake libtool openssl shtool pkg-config hwloc pcre sqlite3 libpcap cmocka
+	Opening card wlp0s20f0u9
+	Setting to channel 1
+	Will spoof MAC addresses in the form C4:E9:84:DB:FB:[00-13]
+	Searching for AP ...
+	Will forge 25 handshakes/second (1 commit every 0 sec 40 msec)
+	[ STATUS: 20.80 forged handshakes/sec |  24 AC tokens received/sec |  49 commits sent/sec ]
 
-### Windows
+From this we learn that the tool by default forges 25 handshakes per second. From the first number in the status line we learn that 20.80 handshakes are successfully forged per second. The other handshakes fail due to packet loss, or due to the AP dropping the handshake frames. The second number tells us that 24 Anti-Clogging tokens (AC tokens) are received (and hence also reflected) per second. Finally, we see that the tool is forging 49 commit frames per second.
 
-#### Cygwin
+## Common Usage
 
-Cygwin requires the full path to the `setup.exe` utility, in order to
-automate the installation of the necessary packages. In addition, it
-requires the location of your installation, a path to the cached
-packages download location, and a mirror URL.
+Building on the previous examples, we can tell the tool to forge more handshakes using the `-r` parameter. For example, to forge 200 handshakes per second (using 20 different MAC addresses), we use:
 
-An example of automatically installing all the dependencies
-is as follows:
+	./dragondrain -d wlan0 -a 01:02:03:04:05:06 -c 6 -b 54 -n 20 -r 200
 
-    c:\cygwin\setup-x86.exe -qnNdO -R C:/cygwin -s http://cygwin.mirror.constant.com -l C:/cygwin/var/cache/setup -P autoconf -P automake -P bison -P gcc-core -P gcc-g++ -P mingw-runtime -P mingw-binutils -P mingw-gcc-core -P mingw-gcc-g++ -P mingw-pthreads -P mingw-w32api -P libtool -P make -P python -P gettext-devel -P gettext -P intltool -P libiconv -P pkg-config -P git -P wget -P curl -P libpcre-devel -P openssl-devel -P libsqlite3-devel
+**In most cases you will use the above commands, while varying the `-n`, `-r`, and `-b` parameters** depending on the target. If the target supports elliptic curve P-521, we can tell the tool to use this curve instead using the `-g 21` parameter. Because this is a bigger curve, we need to forge fewer handshakes to overload the AP:
 
-#### MSYS2
+	./dragondrain -d wlan0 -a 01:02:03:04:05:06 -c 6 -b 54 -n 20 -r 40 -g 21
 
-    pacman -Sy autoconf automake-wrapper libtool msys2-w32api-headers msys2-w32api-runtime gcc pkg-config git python openssl-devel openssl libopenssl msys2-runtime-devel gcc binutils make pcre-devel libsqlite-devel
+Finally, **against several APs it is possible to bypass anti-clogging by forging all handshakes using the same MAC address**:
 
-## Compiling
+	./dragondrain -d wlan0 -a 01:02:03:04:05:06 -c 6 -b 54 -n 1 -r 200
 
-To build `aircrack-ng`, the Autotools build system is utilized. Autotools replaces
-the older method of compilation.
+Notice how in the above command the parameter `-n` equals 1, meaning only a single MAC address is spoofed to forge 200 handshakes per second. In case anti-clogging is successfully bypassed, you will see in the status line that many handshakes are forged, while (close to) zero anti-clogging tokens are received. Note that anti-clogging can only be bypassed if there are few "active" ongoing handshake. Practically, this mean you must wait a few minutes after performing a previous clogging attack before running the above command. Otherwise Hostapd will still require anti-clogging tokens, because it thinks old handshakes are still in progress.
 
-**NOTE**: If utilizing a developer version, eg: one checked out from source control,
-you will need to run a pre-`configure` script. The script to use is one of the
-following: `autoreconf -i` or `env NOCONFIGURE=1 ./autogen.sh`.
+## Specialized Usage
 
-First, `./configure` the project for building with the appropriate options specified
-for your environment:
+The development version of Hostapd contains a defense against our attack. To try to abuse this defense, include the `-M` parameter:
 
-    ./configure <options>
+	./dragondrain -d wlan0 -a 01:02:03:04:05:06 -c 6 -g 19 -b 54 -n 1 -M
 
-**TIP**: If the above fails, please see above about developer source control versions.
+Once the tool detects that the queuing defense if Hostapd has been triggered, it will forge just enough handshakes per second such that the "handshake queue" at the AP remains full. As a result, no other client will be able to connect to the AP using WPA3. Note that this attack mode is experimental.
 
-Next, compile the project (respecting if `make` or `gmake` is needed):
+Another experimental attack mode involves sending a malformed commit frame after forging each handshake. This mode can be enabled by including the `-m` parameter. We conjecture that against some APs, this can be abused the bypass the anti-clogging defense.
 
- * Compilation:
 
-    `make`
+# Dragontime
 
- * Compilation on *BSD or Solaris:
+This is an experimental tool to carry out timing attacks against WPA3's SAE handshake. It was created to carry out attacks, not to detect whether an implementation is vulnerable in the first place. It was used to carry out the timing attack against MODP groups 22 and 24 as described in the [Dragonblood paper](https://papers.mathyvanhoef.com/dragonblood.pdf).
 
-    `gmake`
-
-Finally, the additional targets listed below may be of use in your environment:
-
- * Execute all unit testing:
-
-    `make check`
-
- * Installing:
-
-    `make install`
-
- * Uninstall:
-
-    `make uninstall`
-
-
-###  `./configure` flags
-
-When configuring, the following flags can be used and combined to adjust the suite
-to your choosing:
-
-* **with-airpcap=DIR**:  needed for supporting airpcap devices on windows (cygwin or msys2 only)
-                Replace DIR above with the absolute location to the root of the
-                extracted source code from the Airpcap CD or downloaded SDK available
-                online. Required on Windows to build `besside-ng`, `besside-ng-crawler`, 
-                `easside-ng`, `tkiptun-ng` and `wesside-ng` when building experimental tools.
-                The developer pack (Compatible with version 4.1.1 and 4.1.3) can be downloaded at
-                https://support.riverbed.com/content/support/software/steelcentral-npm/airpcap.html
-
-* **with-experimental**: needed to compile `tkiptun-ng`, `easside-ng`, `buddy-ng`,
-                    `buddy-ng-crawler`, `airventriloquist` and `wesside-ng`.
-                    libpcap development package is also required to compile most of the tools.
-                    If not present, not all experimental tools will be built.
-                    On Cygwin, libpcap is not present and the Airpcap SDK replaces it.
-                    See --with-airpcap option above.
-
-* **with-ext-scripts**: needed to build `airoscript-ng`, `versuck-ng`, `airgraph-ng` and 
-                   `airdrop-ng`. 
-                   Note: Each script has its own dependencies.
-
-* **with-gcrypt**:   Use libgcrypt crypto library instead of the default OpenSSL.
-                And also use internal fast sha1 implementation (borrowed from GIT)
-                Dependency (Debian): libgcrypt20-dev
-
-* **with-duma**:	Compile with DUMA support. DUMA is a library to detect buffer overruns and under-runs.
-            	Dependencies (debian): duma
-
-* **disable-libnl**:  Set-up the project to be compiled without libnl (1 or 3). Linux option only.
-
-* **without-opt**:  Do not enable stack protector (on GCC 4.9 and above).
-
-* **enable-shared**:   Make OSdep a shared library.
-
-* **disable-shared**: When combined with **enable-static**, it will statically compile Aircrack-ng.
-
-* **with-avx512**:  On x86, add support for AVX512 instructions in aircrack-ng. Only use it when
-                    the current CPU supports AVX512.
-
-* **with-static-simd=<SIMD>**: Compile a single optimization in aircrack-ng binary. Useful when compiling
-                    statically and/or for space-constrained devices. Valid SIMD options: x86-sse2,
-                    x86-avx, x86-avx2, x86-avx512, ppc-altivec, ppc-power8, arm-neon, arm-asimd.
-                    Must be used with --enable-static --disable-shared. When using those 2 options, the default
-                    is to compile the generic optimization in the binary. --with-static-simd merely allows
-                    to choose another one.
-
-#### Examples:
-
-  * Configure and compiling:
-
-    ```
-    ./configure --with-experimental
-    make
-    ```
-
-  * Compiling with gcrypt:
-
-    ```
-    ./configure --with-gcrypt
-    make
-    ```
-
-  * Installing:
-
-    `make install`
-
-  * Installing (strip binaries):
-  
-    `make install-strip`
-
-  * Installing, with external scripts:
-
-    ```
-    ./configure --with-experimental --with-ext-scripts
-    make
-    make install
-    ```
-
-  * Testing (with sqlite, experimental and pcre)
-
-    ```
-    ./configure --with-experimental
-    make
-    make check
-    ```
-
-  * Compiling on OS X with macports (and all options):
-
-    ```
-    ./configure --with-experimental
-    gmake
-    ```
-
-  * Compiling on OS X 10.10 with XCode 7.1 and Homebrew:
-
-    ```
-    env CC=gcc-4.9 CXX=g++-4.9 ./configure
-    make
-    make check
-    ```
-
-    *NOTE*: Older XCode ships with a version of LLVM that does not support CPU feature
-    detection; which causes the `./configure` to fail. To work around this older LLVM,
-    it is required that a different compile suite is used, such as GCC or a newer LLVM
-    from Homebrew.
-
-    If you wish to use OpenSSL from Homebrew, you may need to specify the location
-    to its' installation. To figure out where OpenSSL lives, run:
-
-    `brew --prefix openssl`
-
-    Use the output above as the DIR for `--with-openssl=DIR` in the `./configure` line:
-
-    ```
-    env CC=gcc-4.9 CXX=g++-4.9 ./configure --with-openssl=DIR
-    make
-    make check
-    ```
-
-  * Compiling on FreeBSD with better performance
-
-    ```
-    env CC=gcc7 CXX=g++7 MAKE=gmake ./configure
-    gmake
-    ```
-
-  * Compiling on Cygwin with Airpcap (assuming Airpcap devpack is unpacked in Aircrack-ng directory)
-
-    ```
-    cp -vfp Airpcap_Devpack/bin/x86/airpcap.dll src
-    cp -vfp Airpcap_Devpack/bin/x86/airpcap.dll src/aircrack-osdep
-    cp -vfp Airpcap_Devpack/bin/x86/airpcap.dll src/aircrack-crypto
-    cp -vfp Airpcap_Devpack/bin/x86/airpcap.dll src/aircrack-util
-    dlltool -D Airpcap_Devpack/bin/x86/airpcap.dll -d build/airpcap.dll.def -l Airpcap_Devpack/bin/x86/libairpcap.dll.a
-    autoreconf -i
-    ./configure --with-experimental --with-airpcap=$(pwd)
-    make
-    ```
-
- * Compiling on DragonflyBSD with gcrypt using GCC 7
-
-   ```
-   autoreconf -i
-   env CC=gcc7 CXX=g++7 MAKE=gmake ./configure --with-experimental --with-gcrypt
-   gmake
-   ```
-
-# Packaging
-
-Automatic detection of CPU optimization is done at run time. This behavior
-**is** desirable when packaging Aircrack-ng (for a Linux or other distribution.)
-
-Also, in some cases it may be desired to provide your own flags completely and
-not having the suite auto-detect a number of optimizations. To do this, add
-the additional flag `--without-opt` to the `./configure` line:
-
-`./configure --without-opt`
-
-# Using precompiled binaries
-
-## Linux/BSD
- * Use your package manager to download aircrack-ng
- * In most cases, they have an old version.
-
-## Windows
- * Install the appropriate "monitor" driver for your card (standard drivers doesn't work for capturing data).
- * aircrack-ng suite is command line tools. So, you have to open a commandline
-   `Start menu -> Run... -> cmd.exe` then use them
- * Run the executables without any parameters to have help
-
-# Documentation
-
-
-Documentation, tutorials, ... can be found on https://aircrack-ng.org
-
-See also manpages and the forum.
-
-For further information check the [README](README) file

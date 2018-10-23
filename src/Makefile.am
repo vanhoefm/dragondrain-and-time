@@ -76,6 +76,8 @@ SRC_AU		= airdecloak-ng.c
 SRC_TT		= tkiptun-ng.c
 SRC_WC		= wpaclean.c
 SRC_AV		= airventriloquist-ng.c
+SRC_DRAGONDRAIN     = dragondrain.c
+SRC_DRAGONTIME   = dragontime.c
 
 SRC_ACLIB	= crypto.c $(SSEC_INT) uniqueiv.c session.c
 LIBAC	= libaclib.la
@@ -99,6 +101,8 @@ SRC_WS          += sha1-git.c
 SRC_TT          += sha1-git.c
 SRC_BS          += sha1-git.c
 SRC_AV          += sha1-git.c
+SRC_DRAGONDRAIN     += sha1-git.c
+SRC_DRAGONTIME   += sha1-git.c
 endif
 
 LIBAIRCRACK_CRYPTO = aircrack-crypto/libaircrack-crypto.la
@@ -145,7 +149,9 @@ sbin_PROGRAMS = airbase-ng \
                 aireplay-ng \
                 airodump-ng \
                 airserv-ng \
-                airtun-ng
+                airtun-ng \
+                dragondrain \
+		dragontime
 
 if HAVE_SQLITE3
 bin_PROGRAMS += airolib-ng
@@ -254,6 +260,14 @@ wpaclean_LDADD = $(COMMON_LDADD) $(LIBAIRCRACK_OSDEP_LIBS) $(LIBAC_LIBS) $(AIRPC
 airventriloquist_ng_SOURCES = $(SRC_AV) $(LIBAIRCRACK_OSDEP) $(LIBAIRCRACK_UTIL)
 airventriloquist_ng_CFLAGS = $(COMMON_CFLAGS) $(LIBNL_CFLAGS)
 airventriloquist_ng_LDADD = $(COMMON_LDADD) $(LIBAIRCRACK_OSDEP_LIBS) $(LIBAC_LIBS) $(AIRPCAP_LIBS) $(LIBAIRCRACK_UTIL_LIBS) $(CRYPTO_LIBS)
+
+dragondrain_SOURCES = $(SRC_DRAGONDRAIN) $(LIBAIRCRACK_OSDEP) $(LIBAIRCRACK_UTIL)
+dragondrain_CFLAGS = $(COMMON_CFLAGS) $(LIBNL_CFLAGS)
+dragondrain_LDADD = $(COMMON_LDADD) $(LIBAIRCRACK_OSDEP_LIBS) $(LIBAC_LIBS) $(AIRPCAP_LIBS) $(LIBAIRCRACK_UTIL_LIBS) $(CRYPTO_LIBS)
+
+dragontime_SOURCES = $(SRC_DRAGONTIME) $(LIBAIRCRACK_OSDEP) $(LIBAIRCRACK_UTIL)
+dragontime_CFLAGS = $(COMMON_CFLAGS) $(LIBNL_CFLAGS)
+dragontime_LDADD = $(COMMON_LDADD) $(LIBAIRCRACK_OSDEP_LIBS) $(LIBAC_LIBS) $(AIRPCAP_LIBS) $(LIBAIRCRACK_UTIL_LIBS) $(CRYPTO_LIBS)
 
 libaclib_la_SOURCES = $(SRC_ACLIB)
 libaclib_la_CFLAGS = $(COMMON_CFLAGS) $(LIBAIRCRACK_UTIL_CFLAGS)
