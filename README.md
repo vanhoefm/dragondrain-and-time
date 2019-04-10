@@ -30,11 +30,15 @@ After loading the `ath_masker` kernel module, and afterwards plugging in the Wi-
 	sudo ifconfig wlan0 up
 
 Atheros devices we tested ourselves to work properly with the `ath_masker` kernel module are:
-- **TODO: Amazon links**
-- **TODO: Ask 3rd parties which tools they used**
+- <a href="http://www.amazon.com/dp/B004Y6MIXS?tag=modwiffir-20">AWUS036NHA</a>
 
 Other Atheros devices that should work (but we did not explicitly test ourselves):
-- **TODO: Amazon links**
+- <a href="https://www.amazon.com/dp/B004HFQM1A?tag=modwiffir-20">TL-WN721N</a>
+- <a href="https://www.amazon.com/dp/B078HB6KNQ?tag=modwiffir-20">Sony UWA-BR100</a>
+
+Finally, these are devices that used to work, but are now harder to find somewhere:
+- <a href="">WNDA3200</a>
+- <a href="https://wikidevi.com/wiki/TP-LINK_TL-WN722N">TP-Link WN722N v1</a>. Note that the newer v2 version is not compatible with ModWifi because it no longer uses an Atheros chip. Be sure to buy the v1 version.
 
 So again, **remember to load [`ath_masker`](https://github.com/vanhoefm/ath_masker) before running Dragondrain and Dragontime**!
 
