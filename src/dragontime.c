@@ -50,7 +50,6 @@
 
 #define USED_RATE RATE_54M
 
-// TODO: Share this in another file between clogger.c
 unsigned char AUTH_REQ_SAE_COMMIT_GROUP_22[] = 
 	/* 802.11 header */ \
 	"\xb0\x00\x00\x00\xBB\xBB\xBB\xBB\xBB\xBB\xCC\xCC\xCC\xCC\xCC\xCC" \
@@ -124,7 +123,6 @@ unsigned char AUTH_REQ_SAE_COMMIT_GROUP_23[] =
 size_t AUTH_REQ_SAE_COMMIT_GROUP_23_SIZE = sizeof(AUTH_REQ_SAE_COMMIT_GROUP_23) - 1;
 
 
-// TODO: Share this in another file between clogger.c
 unsigned char AUTH_REQ_SAE_COMMIT_GROUP_24[] = 
 	/* 802.11 header */ \
 	"\xb0\x00\x00\x00\xBB\xBB\xBB\xBB\xBB\xBB\xCC\xCC\xCC\xCC\xCC\xCC" \
