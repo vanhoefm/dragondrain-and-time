@@ -553,8 +553,8 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 		{
 			unsigned char *token = buf + 24 + 8;
 			int token_len = len - 24 - 8;
-			unsigned char *reply;
-			size_t reply_len;
+			unsigned char reply[2048] = {0};
+			size_t reply_len = 0;
 
 			//printf("ERROR: Anti-clogging token hit\n");
 			//exit(1);
@@ -562,19 +562,27 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 			/* fill in basic frame */
 			switch (state->group) {
 			case 22:	
-				reply_len = AUTH_REQ_SAE_COMMIT_GROUP_22_SIZE + token_len;
-				reply = malloc(reply_len);
-				memcpy(reply, AUTH_REQ_SAE_COMMIT_GROUP_22, AUTH_REQ_SAE_COMMIT_GROUP_22_SIZE);
+				reply_len = AUTH_REQ_SAE_COMMIT_GROUP_22_SIZE;
+				memcpy(reply, AUTH_REQ_SAE_COMMIT_GROUP_22, reply_len);
 				break;
 			case 23:
-				reply_len = AUTH_REQ_SAE_COMMIT_GROUP_23_SIZE + token_len;
-				reply = malloc(reply_len);
-				memcpy(reply, AUTH_REQ_SAE_COMMIT_GROUP_23, AUTH_REQ_SAE_COMMIT_GROUP_23_SIZE);
+				reply_len = AUTH_REQ_SAE_COMMIT_GROUP_23_SIZE;
+				memcpy(reply, AUTH_REQ_SAE_COMMIT_GROUP_23, reply_len);
 				break;
 			case 24:
-				reply_len = AUTH_REQ_SAE_COMMIT_GROUP_24_SIZE + token_len;
-				reply = malloc(reply_len);
-				memcpy(reply, AUTH_REQ_SAE_COMMIT_GROUP_24, AUTH_REQ_SAE_COMMIT_GROUP_24_SIZE);
+				reply_len = AUTH_REQ_SAE_COMMIT_GROUP_24_SIZE;
+				memcpy(reply, AUTH_REQ_SAE_COMMIT_GROUP_24, reply_len);
+				break;
+			case 19:
+			case 20:
+			case 21:
+			case 25:
+			case 26:
+			case 27:
+			case 28:
+			case 29:
+			case 30:
+				reply_len = generate_sae_commit_ecc(state, reply, sizeof(reply));
 				break;
 			default:
 				debug(state, 1, "Internal error: unsupported group %d in %s\n", state->group, __FUNCTION__);
@@ -583,8 +591,9 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 
 			/* token comes after status and group id, before scalar and element */
 			int pos = 24 + 8;
-			memmove(reply + pos + token_len, reply + pos, reply_len - pos - token_len);
+			memmove(reply + pos + token_len, reply + pos, reply_len - pos);
 			memcpy(reply + pos, token, token_len);
+			reply_len += token_len;
 
 			/* set addresses */
 			memcpy(reply + 4, state->bssid, 6);
@@ -597,8 +606,6 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 			if (card_write(state, reply, reply_len, NULL) == -1)
 				perror("card_write");
 			clock_gettime(CLOCK_MONOTONIC, &state->prev_commit);
-
-			free(reply);
 		}
 	}
 }
