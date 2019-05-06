@@ -889,7 +889,7 @@ int main(int argc, char * argv[])
 	state->curraddr = 0;
 	state->debug_level = 1;
 	state->group = 24;
-	state->delay = 500;
+	state->delay = 250;
 	state->timeout = 750;
 	state->num_addresses = 20;
 
