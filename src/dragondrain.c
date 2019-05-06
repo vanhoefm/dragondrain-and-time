@@ -650,6 +650,7 @@ static void event_loop(struct state *state, char * dev, int chan)
 	}
 }
 
+// FIXME: Share this function between dragontime and dragondrain
 static bool is_module_loaded(const char *module)
 {
 	char line[256];
