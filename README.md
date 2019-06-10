@@ -101,5 +101,10 @@ Another experimental attack mode involves sending a malformed commit frame after
 
 # Dragontime
 
-This is an experimental tool to carry out timing attacks against WPA3's SAE handshake. It was created to carry out attacks, not to detect whether an implementation is vulnerable in the first place. It was used to carry out the timing attack against MODP groups 22 and 24 as described in the [Dragonblood paper](https://papers.mathyvanhoef.com/dragonblood.pdf).
+This is an experimental tool to carry out timing attacks against WPA3's SAE handshake. It was created to carry out attacks, not to detect whether an implementation is vulnerable in the first place. It was used to carry out the timing attack against MODP groups 22 and 24 as described in the [Dragonblood paper](https://papers.mathyvanhoef.com/dragonblood.pdf), against Brainpool curves, and against EAP-pwd clients using NIST curves.
 
+Example usage:
+
+	./dragontime -d wlan0 -c 1 -a 11:22:33:44:55:66 -g 27 -i 250 -t 750 -o measurements.txt
+
+This uses interface `wlan0` to attack the AP `11:22:33:44:55:6` located on channel 1. The timing attack is performed using group 27, and it waits 250ms after receiving a reply to a spoofed commit frame. If no reply is received after 750ms, it retransmit the spoofed commit frame. Finally, the timing measurements are written to the file `measurements.txt`. The resulting timing measurements can be processed by plotting them or performing statistical analysis on them.
