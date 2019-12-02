@@ -555,7 +555,7 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 			fprintf(state->fp, "STA %02X: %ld\n", state->curraddr, diff.tv_nsec / 1000);
 
 			// Also provide output to the screen			
-			printf("STA %02X: %ld miliseconds (TOTAL %d)\n", state->curraddr, diff.tv_nsec / 1000,
+			printf("STA %02X: %ld microseconds (TOTAL %d)\n", state->curraddr, diff.tv_nsec / 1000,
 				state->num_injected[state->curraddr]);
 			if (state->curraddr == 0 && state->num_injected[state->num_addresses - 1] > 0) {
 				printf("-------------------------------\n");
