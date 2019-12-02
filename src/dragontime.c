@@ -464,7 +464,7 @@ static void check_timeout(struct state *state)
 		diff.tv_sec = curr.tv_sec - state->prev_commit.tv_sec - 1;
 	}
 
-	if (diff.tv_nsec > state->timeout * 1000 * 1000) {
+	if (diff.tv_nsec / (1000 * 1000) + diff.tv_sec * 1000 > state->timeout) {
 		debug(state, 2, "Detected timeout, deauthenticating and queuing next commit\n");
 
 		inject_deauth(state);
