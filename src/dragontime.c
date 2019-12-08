@@ -886,6 +886,7 @@ static void usage(char * p)
 		   "       -v <level>   : Debug level (1 to 3; default: 1)\n"
 		   "       -i <inter>   : Delay between two injects in ms\n"
 		   "       -t <timeout> : Timeout in ms to retransmit commit\n"
+		   "       -n <number>  : Number of MAC addresses to forge\n"
 		   "\n",
 		   version_info);
 	free(version_info);
@@ -909,7 +910,7 @@ int main(int argc, char * argv[])
 	state->timeout = 750;
 	state->num_addresses = 20;
 
-	while ((ch = getopt(argc, argv, "d:hc:v:a:g:r:i:t:o:")) != -1)
+	while ((ch = getopt(argc, argv, "d:hc:v:a:g:r:i:t:o:n:")) != -1)
 	{
 		switch (ch)
 		{
@@ -950,6 +951,14 @@ int main(int argc, char * argv[])
 				state->timeout = atoi(optarg);
 				if (state->timeout < 1) {
 					printf("Please enter a timeout above zero\n");
+					return 1;
+				}
+				break;
+
+			case 'n':
+				state->num_addresses = atoi(optarg);
+				if (state->num_addresses < 1 || state->num_addresses > 255) {
+					printf("Number of addresses to forge out of range [1, 255]\n");
 					return 1;
 				}
 				break;
