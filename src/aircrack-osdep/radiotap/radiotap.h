@@ -39,7 +39,7 @@ struct ieee80211_radiotap_header {
 	 * @it_present: (first) present word
 	 */
 	uint32_t it_present;
-} __packed;
+};
 
 /* version is always 0 */
 #define PKTHDR_RADIOTAP_VERSION	0
